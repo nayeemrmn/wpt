@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<title>Check COEP reports are send for 'new Worker()' failure in DedicatedWorker</title>
+<meta name="timeout" content="long">
+</head>
+<body>
+<script src="/common/get-host-info.sub.js"></script>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/service-workers/service-worker/resources/test-helpers.sub.js"></script>
+<script>
+const {ORIGIN} = get_host_info();
+const RESOURCES_PATH= new URL("resources", location).pathname;
+const iframe_path = "worker-owner-frame.html?pipe=";
+const worker_path = "universal-worker.js?pipe=";
+
+const coep_header= {
+  "coep-none"         : "",
+  "coep-report-only"  :
+    "header(Cross-Origin-Embedder-Policy-Report-Only,require-corp)",
+  "coep-require-corp" : "|header(Cross-Origin-Embedder-Policy,require-corp)",
+};
+
+function checkReport(report, url, blocked_url, disposition) {
+  assert_equals(report.type, "coep");
+  assert_equals(report.url, url);
+  assert_equals(report.body.type, "worker initialization");
+  assert_equals(report.body.blockedURL, blocked_url);
+  assert_equals(report.body.disposition, disposition);
+}
+
+// Test parameters:
+// - `iframe_coep` the COEP header of the iframe's document response
+// - `worker_coep` the COEP header of the DedicatedWorker's script response.
+//
+// Test expectations:
+// - `result`
+//   - "success" when a worker is created.
+//   - "error" when a worker can't be created.
+// - `length` the length of reports
+function check(
+  // Test parameters:
+  iframe_coep,
+  worker_coep,
+  // Test expectations:
+  result,
+  length) {
+  promise_test(async (t) => {
+    const worker_url = worker_path + coep_header[worker_coep];
+    const iframe_url = iframe_path + coep_header[iframe_coep];
+    const iframe = await with_iframe("./resources/" + iframe_url);
+    t.add_cleanup(() => iframe.remove());
+
+    const iframe_response = new Promise(resolve => window.onmessage = resolve);
+    iframe.contentWindow.startWorkerAndObserver(t, worker_url);
+
+    const {data} = await iframe_response;
+    assert_equals(data.result, result);
+    assert_equals(data.reports.length, length);
+    if (data.reports.length > 0) {
+      const blocked_url = `${ORIGIN}${RESOURCES_PATH}/${worker_url}`;
+      const url = `${ORIGIN}${RESOURCES_PATH}/${iframe_url}`;
+      checkReport(
+        data.reports[0],
+        url,
+        blocked_url,
+        data.result == "error" ? "enforce" : "reporting",
+      );
+    }
+  }, `${iframe_coep} ${worker_coep}`);
+}
+
+// -----------------------------------------------------------------------------
+//    iframe_coep         , worker_coep         , result   , length
+// -----------------------------------------------------------------------------
+check("coep-none"         , "coep-none"         , "success", 0);
+check("coep-none"         , "coep-report-only"  , "success", 0);
+check("coep-none"         , "coep-require-corp" , "success", 0);
+check("coep-report-only"  , "coep-none"         , "success", 1);
+check("coep-report-only"  , "coep-report-only"  , "success", 1);
+check("coep-report-only"  , "coep-require-corp" , "success", 0);
+check("coep-require-corp" , "coep-none"         , "error",   1);
+check("coep-require-corp" , "coep-report-only"  , "error",   1);
+check("coep-require-corp" , "coep-require-corp" , "success", 0);
+
+</script>
+</body>
+</html>

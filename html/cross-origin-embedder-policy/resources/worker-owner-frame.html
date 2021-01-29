@@ -1,0 +1,30 @@
+<!doctype html>
+<script>
+async function startWorkerAndObserver(t, worker_url) {
+  let reports = [];
+  const worker = new Worker(worker_url);
+  worker.onerror = () => {
+    // Wait 1000ms for reports to settle.
+    t.step_timeout(() => {
+      parent.postMessage({result: 'error', reports: reports});
+    }, 1000);
+  };
+  const worker_response = new Promise(resolve => worker.onmessage = resolve);
+
+  const observer = new ReportingObserver((rs) => {
+    for (const r of rs) {
+      reports.push(r.toJSON());
+    }
+  });
+  observer.observe();
+
+  // Wait 1000ms for reports to settle.
+  t.step_timeout(() => {
+    observer.disconnect();
+    worker.postMessage("postMessage('success');");
+  }, 1000);
+
+  const response = await worker_response;
+  parent.postMessage({result: response.data, reports: reports});
+}
+</script>
